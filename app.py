@@ -5,7 +5,7 @@ import joblib
 
 st.set_page_config(page_title="Trail Event Capacity & Risk Simulator", layout="wide")
 
-st.title("🏔 Trail Event Capacity & Risk Simulator")
+st.title(" Trail Event Capacity & Risk Simulator")
 
 # =========================
 # CARGAR MODELOS
@@ -64,7 +64,7 @@ if st.button("Simulate Event"):
     revenue = participants * registration_fee
     profit = revenue - fixed_cost
 
-    st.subheader("📊 Event Results")
+    st.subheader(" Event Results")
 
     colA, colB, colC = st.columns(3)
 
@@ -86,4 +86,5 @@ if st.button("Simulate Event"):
         st.warning("⚠ Moderate Risk – Monitor logistics and race conditions.")
     else:
         st.success("✔ Low Structural Risk Event.")
+
 
