@@ -39,6 +39,21 @@ for i in range(num_routes):
         "Risk": risk_prob
     })
 
+routes_df = pd.DataFrame(routes_data)
+
+st.subheader("Resumen por Ruta")
+st.dataframe(routes_df)
+
+# Riesgo global ponderado por participantes
+total_participants = routes_df["Participants"].sum()
+
+global_risk_prob = (
+    (routes_df["Risk"] * routes_df["Participants"]).sum()
+    / total_participants
+)
+
+st.metric("Riesgo Global del Evento", f"{global_risk_prob:.2%}")
+
 
 
 
