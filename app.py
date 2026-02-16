@@ -178,7 +178,155 @@ if saturation_ratio > 1:
 elif saturation_ratio > 0.8:
     st.warning("El evento esta cercano al limite operativo.")
 else:
-    st.success("Evento dentro de capacidad operativa.")
+    st.success("Evento dentro de capacidad operativa.") 
+
+# =========================
+# GLOBAL METRICS
+# =========================
+
+total_participants = df_routes["N Participants"].sum()
+total_revenue = df_routes["Revenue"].sum()
+total_variable_cost = df_routes["Variable_Cost"].sum()
+total_profit = total_revenue - total_variable_cost - fixed_cost
+avg_risk = df_routes["High_Risk_Prob"].mean()
+
+# Capacidad base configurable
+capacity_limit = 1200
+saturation_ratio = total_participants / capacity_limit
+
+# Break-even
+if total_participants > 0:
+    break_even_price = (fixed_cost / total_participants) + (
+        df_routes["Variable_Cost"].sum() / total_participants
+    )
+else:
+    break_even_price = 0
+
+# =========================
+# NIVEL RECOMENDADO POR RUTA
+# =========================
+
+recommended_participants = []
+
+for idx, row in df_routes.iterrows():
+    if row["High_Risk_Prob"] > 0.7:
+        recommended = int(row["N Participants"] * 0.8)
+    elif row["High_Risk_Prob"] > 0.4:
+        recommended = int(row["N Participants"] * 0.9)
+    else:
+        recommended = int(row["N Participants"] * 1.05)
+    recommended_participants.append(recommended)
+
+df_routes["Recommended_Participants"] = recommended_participants
+
+# =========================
+# DASHBOARD METRICS
+# =========================
+
+st.markdown("---")
+st.header("Resumen Ejecutivo")
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Participantes", total_participants)
+col2.metric("Ingreso Total ($)", round(total_revenue, 2))
+col3.metric("Beneficio Total ($)", round(total_profit, 2))
+
+col4, col5, col6 = st.columns(3)
+col4.metric("Riesgo Promedio", round(avg_risk, 3))
+col5.metric("Break-even Precio ($)", round(break_even_price, 2))
+col6.metric("Capacidad Utilizada (%)", round(saturation_ratio * 100, 1))
+
+# =========================
+# TABLA DETALLE
+# =========================
+
+st.markdown("---")
+st.header("Detalle por Ruta")
+
+st.dataframe(df_routes[[
+    "N Participants",
+    "Recommended_Participants",
+    "Revenue",
+    "Route_Profit",
+    "Predicted_DNF",
+    "High_Risk_Prob"
+]])
+
+# =========================
+# GRAFICO PROFESIONAL
+# =========================
+
+st.markdown("---")
+st.header("Riesgo vs Beneficio por Ruta")
+
+import matplotlib.pyplot as plt
+
+fig, ax1 = plt.subplots()
+
+# Beneficio
+ax1.bar(
+    range(len(df_routes)),
+    df_routes["Route_Profit"],
+    alpha=0.6,
+    label="Beneficio"
+)
+
+ax1.set_ylabel("Beneficio ($)")
+
+# Riesgo en eje secundario
+ax2 = ax1.twinx()
+ax2.plot(
+    range(len(df_routes)),
+    df_routes["High_Risk_Prob"],
+    marker="o",
+    linewidth=3,
+    label="Riesgo DNF"
+)
+
+ax2.set_ylabel("Probabilidad Alto DNF")
+
+plt.title("Balance Riesgo - Rentabilidad")
+plt.xticks(range(len(df_routes)), [f"Ruta {i+1}" for i in range(len(df_routes))])
+
+st.pyplot(fig)
+
+# =========================
+# ALERTAS DE CAPACIDAD
+# =========================
+
+st.markdown("---")
+st.header("Estado Operativo")
+
+if saturation_ratio > 1:
+    st.error("Evento sobresaturado. Se recomienda reducir cupos.")
+elif saturation_ratio > 0.8:
+    st.warning("Evento cercano al limite operativo.")
+else:
+    st.success("Capacidad operativa adecuada.")
+
+# =========================
+# RECOMENDACIONES OPERATIVAS
+# =========================
+
+st.markdown("---")
+st.header("Recomendaciones")
+
+for idx, row in df_routes.iterrows():
+    st.subheader(f"Ruta {idx+1}")
+
+    if row["High_Risk_Prob"] > 0.7:
+        st.warning("Riesgo alto.")
+        st.write("• Hidratacion cada 5 km")
+        st.write("• Centro medico intermedio")
+        st.write("• Mayor control tecnico")
+    elif row["High_Risk_Prob"] > 0.4:
+        st.info("Riesgo medio.")
+        st.write("• Hidratacion cada 7 km")
+        st.write("• Monitoreo adicional")
+    else:
+        st.success("Riesgo bajo. Operacion estandar suficiente.")
+
+
 
 
 
