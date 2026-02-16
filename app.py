@@ -1,58 +1,144 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
+import matplotlib.pyplot as plt
 
-st.sidebar.header("Configuracion del Evento")
+st.header("Trail Event Capacity & Risk Simulator")
 
-num_routes = st.sidebar.number_input("Numero de rutas", min_value=1, max_value=5, value=1)
+st.subheader("Configuración del Evento")
 
-routes_data = []
+year = st.number_input("Año del evento", 2024, 2035, 2025)
+entry_fee = st.number_input("Cuota inscripción ($)", 0.0, 1000.0, 60.0)
+fixed_cost = st.number_input("Costo fijo estimado ($)", 0.0, 1000000.0, 15000.0)
+
+st.markdown("---")
+st.subheader("Configuración de Rutas")
+
+num_routes = st.number_input("Cantidad de rutas", 1, 5, 1)
+
+routes = []
 
 for i in range(num_routes):
-    st.sidebar.markdown(f"---")
-    st.sidebar.subheader(f"Ruta {i+1}")
+    st.markdown(f"### Ruta {i+1}")
     
-    distance = st.sidebar.number_input(f"Distancia Ruta {i+1} (km)", min_value=1.0, value=25.0, key=f"d{i}")
-    elevation = st.sidebar.number_input(f"Desnivel Ruta {i+1} (m)", min_value=0.0, value=1000.0, key=f"e{i}")
-    participants = st.sidebar.number_input(f"Participantes Ruta {i+1}", min_value=1, value=300, key=f"p{i}")
-    start_hour = st.sidebar.number_input(f"Hora inicio Ruta {i+1}", min_value=0, max_value=23, value=6, key=f"h{i}")
+    col1, col2, col3 = st.columns(3)
     
-    elevation_per_km = elevation / distance
+    with col1:
+        distance = st.number_input(f"Distancia km (Ruta {i+1})", 1.0, 200.0, 50.0, key=f"d{i}")
+    with col2:
+        elevation = st.number_input(f"Desnivel m (Ruta {i+1})", 0.0, 15000.0, 2000.0, key=f"e{i}")
+    with col3:
+        participants = st.number_input(f"Participantes (Ruta {i+1})", 0, 10000, 500, key=f"p{i}")
     
-    input_df = pd.DataFrame([{
+    elev_per_km = elevation / distance if distance > 0 else 0
+    
+    routes.append({
         "Distance": distance,
         "Elevation Gain": elevation,
-        "elevation_per_km": elevation_per_km,
+        "elevation_per_km": elev_per_km,
         "N Participants": participants,
         "Year": year
-    }])
-    
-    predicted_dnf = rf_model.predict(input_df)[0]
-    risk_prob = log_model.predict_proba(input_df)[0][1]
-    
-    routes_data.append({
-        "Ruta": f"Ruta {i+1}",
-        "Distance": distance,
-        "Participants": participants,
-        "DNF": predicted_dnf,
-        "Risk": risk_prob
     })
 
-routes_df = pd.DataFrame(routes_data)
+if st.button("Simular Evento"):
 
-st.subheader("Resumen por Ruta")
-st.dataframe(routes_df)
+    df_routes = pd.DataFrame(routes)
 
-# Riesgo global ponderado por participantes
-total_participants = routes_df["Participants"].sum()
+    # --- Predicciones ---
+    dnf_pred = rf_model.predict(df_routes)
+    high_risk_prob = log_model.predict_proba(df_routes)[:,1]
 
-global_risk_prob = (
-    (routes_df["Risk"] * routes_df["Participants"]).sum()
-    / total_participants
-)
+    df_routes["Predicted_DNF"] = dnf_pred
+    df_routes["High_Risk_Prob"] = high_risk_prob
 
-st.metric("Riesgo Global del Evento", f"{global_risk_prob:.2%}")
+    total_participants = df_routes["N Participants"].sum()
+    revenue = total_participants * entry_fee
+    profit = revenue - fixed_cost
+
+    global_risk = high_risk_prob.mean()
+    avg_dnf = dnf_pred.mean()
+
+    # Saturación simple (modelo heurístico)
+    capacity_estimate = int(1000 - (avg_dnf * 500))
+    saturation_ratio = total_participants / capacity_estimate if capacity_estimate > 0 else 0
+
+    # ======================
+    # DASHBOARD METRICS
+    # ======================
+
+    st.markdown("---")
+    st.subheader("Resumen Ejecutivo")
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Participantes Totales", f"{total_participants:,}")
+    col2.metric("Ingreso Estimado ($)", f"${revenue:,.0f}")
+    col3.metric("Beneficio Estimado ($)", f"${profit:,.0f}")
+
+    col4, col5, col6 = st.columns(3)
+
+    col4.metric("DNF Promedio Estimado", f"{avg_dnf:.2%}")
+    col5.metric("Probabilidad Riesgo Alto", f"{global_risk:.2%}")
+    col6.metric("Capacidad Recomendada", f"{capacity_estimate:,}")
+
+    # ======================
+    # RIESGO
+    # ======================
+
+    st.markdown("---")
+    st.subheader("Evaluación de Riesgo")
+
+    if global_risk > 0.7:
+        st.error("Riesgo Global ALTO")
+    elif global_risk > 0.4:
+        st.warning("Riesgo Global MEDIO")
+    else:
+        st.success("Riesgo Global BAJO")
+
+    if saturation_ratio > 1:
+        st.error("Evento Saturado - Reduce participantes o aumenta soporte logístico")
+    elif saturation_ratio > 0.8:
+        st.warning("Evento cercano a saturación")
+    else:
+        st.success("Capacidad dentro de rango seguro")
+
+    # ======================
+    # RECOMENDACIONES OPERATIVAS
+    # ======================
+
+    st.markdown("---")
+    st.subheader("Recomendaciones Operativas")
+
+    hydration_points = int(df_routes["Distance"].mean() / 5)
+    medical_points = int(df_routes["Distance"].mean() / 15)
+
+    st.write(f"- Centros de hidratación recomendados: {hydration_points}")
+    st.write(f"- Puntos médicos recomendados: {medical_points}")
+    st.write(f"- Staff mínimo sugerido: {int(total_participants / 50)} personas")
+
+    # ======================
+    # GRÁFICO EXPLICATIVO
+    # ======================
+
+    st.markdown("---")
+    st.subheader("Visualización de Riesgo vs Participantes")
+
+    fig, ax1 = plt.subplots()
+
+    ax1.bar(range(len(df_routes)), df_routes["N Participants"])
+    ax1.set_ylabel("Participantes")
+
+    ax2 = ax1.twinx()
+    ax2.plot(df_routes["High_Risk_Prob"], linestyle="--")
+    ax2.set_ylabel("Probabilidad Riesgo Alto")
+
+    st.pyplot(fig)
+
+    # Tabla detallada
+    st.markdown("---")
+    st.subheader("Detalle por Ruta")
+    st.dataframe(df_routes)
+
 
 
 
