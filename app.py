@@ -1,157 +1,101 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
-import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+
+st.set_page_config(page_title="Trail Event Simulator", layout="wide")
 
 # -----------------------------
-# CONFIG
+# Cargar dataset
 # -----------------------------
-st.set_page_config(page_title="Trail Event Risk Dashboard", layout="wide")
+@st.cache_data
+def load_data():
+    df = pd.read_csv("TU_DATASET.csv")  # <-- pon aquí tu dataset real
+    df['DNF_rate'] = df['N DNF'] / df['N Participants']
+    df['elevation_per_km'] = df['Elevation Gain'] / df['Distance']
+    df = df.replace([np.inf, -np.inf], np.nan).dropna()
+    return df
 
-st.markdown(
-    """
-    <style>
-    .metric-card {
-        background-color: #111;
-        padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        color: white;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+df = load_data()
 
+features = [
+    'Distance',
+    'Elevation Gain',
+    'elevation_per_km',
+    'N Participants',
+    'Year'
+]
+
+# -----------------------------
+# Entrenar modelos dentro de la app
+# -----------------------------
+@st.cache_resource
+def train_models(df):
+
+    X = df[features]
+    y_reg = df['DNF_rate']
+
+    # Modelo regresión (DNF continuo)
+    rf_model = RandomForestRegressor(
+        n_estimators=80,
+        max_depth=10,
+        random_state=42
+    )
+    rf_model.fit(X, y_reg)
+
+    # Modelo clasificación alto riesgo
+    threshold = df['DNF_rate'].quantile(0.75)
+    df['High_DNF'] = (df['DNF_rate'] >= threshold).astype(int)
+
+    y_clf = df['High_DNF']
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y_clf, test_size=0.2, random_state=42, stratify=y_clf
+    )
+
+    log_model = LogisticRegression(max_iter=1000)
+    log_model.fit(X_train, y_train)
+
+    return rf_model, log_model, threshold
+
+rf_model, log_model, threshold = train_models(df)
+
+# -----------------------------
+# Simulación
+# -----------------------------
 st.title("Trail Event Capacity & Risk Simulator")
 
-# -----------------------------
-# LOAD MODELS
-# -----------------------------
-rf_model = joblib.load("dnf_rf_model.joblib")
-log_model = joblib.load("high_dnf_log_model.joblib")
-growth_model = joblib.load("growth_model.joblib")
+distance = st.number_input("Distancia (km)", 1.0, 200.0, 50.0)
+elevation = st.number_input("Desnivel acumulado (m)", 0.0, 10000.0, 1200.0)
+participants = st.number_input("Número de participantes", 10, 10000, 500)
+year = st.number_input("Año", 2010, 2035, 2025)
 
-# -----------------------------
-# INPUTS
-# -----------------------------
-st.sidebar.header("Event Parameters")
+elevation_per_km = elevation / distance
 
-distance = st.sidebar.number_input("Distance (km)", 1.0, 300.0, 50.0)
-elevation = st.sidebar.number_input("Elevation Gain (m)", 0.0, 15000.0, 2000.0)
-year = st.sidebar.number_input("Year", 2024, 2035, 2025)
-fee = st.sidebar.number_input("Registration Fee ($)", 10.0, 1000.0, 60.0)
-fixed_cost = st.sidebar.number_input("Fixed Cost ($)", 0.0, 500000.0, 20000.0)
-max_participants = st.sidebar.number_input("Max Participants to Simulate", 100, 10000, 3000)
+input_data = pd.DataFrame([{
+    'Distance': distance,
+    'Elevation Gain': elevation,
+    'elevation_per_km': elevation_per_km,
+    'N Participants': participants,
+    'Year': year
+}])
 
-simulate = st.sidebar.button("Run Simulation")
+# Predicciones
+predicted_dnf = rf_model.predict(input_data)[0]
+high_risk_prob = log_model.predict_proba(input_data)[0][1]
 
-# -----------------------------
-# SIMULATION
-# -----------------------------
-if simulate:
+st.markdown("### 📊 Resultados")
 
-    participants_range = np.arange(100, max_participants, 50)
+col1, col2 = st.columns(2)
 
-    elevation_per_km = elevation / distance
+with col1:
+    st.metric("DNF estimado", f"{predicted_dnf:.2%}")
 
-    df_sim = pd.DataFrame({
-        "Distance": distance,
-        "Elevation Gain": elevation,
-        "elevation_per_km": elevation_per_km,
-        "Year": year,
-        "N Participants": participants_range
-    })
+with col2:
+    st.metric("Probabilidad Alto Riesgo", f"{high_risk_prob:.2%}")
 
-    # Predict DNF
-    df_sim["Predicted_DNF"] = rf_model.predict(df_sim)
-
-    # Predict High Risk probability
-    df_sim["High_Risk_Prob"] = log_model.predict_proba(df_sim)[:,1]
-
-    # Financial metrics
-    df_sim["Revenue"] = df_sim["N Participants"] * fee
-    df_sim["Profit"] = df_sim["Revenue"] - fixed_cost
-    df_sim["ROI"] = (df_sim["Profit"] / fixed_cost).replace([np.inf, -np.inf], 0)
-
-    # Saturation threshold
-    risk_threshold = 0.75
-    sat = df_sim[df_sim["High_Risk_Prob"] >= risk_threshold]
-
-    if not sat.empty:
-        saturation_point = int(sat.iloc[0]["N Participants"])
-    else:
-        saturation_point = int(df_sim["N Participants"].max())
-
-    safe_capacity = int(saturation_point * 0.9)
-    max_profit = int(df_sim["Profit"].max())
-    break_even = int(np.ceil(fixed_cost / fee))
-
-    avg_risk = round(df_sim["High_Risk_Prob"].mean(), 2)
-    avg_dnf = round(df_sim["Predicted_DNF"].mean(), 2)
-
-    # -----------------------------
-    # DASHBOARD CARDS
-    # -----------------------------
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric("Saturation Point", f"{saturation_point}")
-    col2.metric("Safe Capacity", f"{safe_capacity}")
-    col3.metric("Max Profit", f"${max_profit:,.0f}")
-    col4.metric("Break-even Participants", f"{break_even}")
-
-    st.divider()
-
-    col5, col6, col7 = st.columns(3)
-
-    col5.metric("Average Risk Probability", avg_risk)
-    col6.metric("Average Predicted DNF", avg_dnf)
-    col7.metric("Expected ROI", f"{round(df_sim['ROI'].max()*100,1)} %")
-
-    st.divider()
-
-    # -----------------------------
-    # EXECUTIVE GRAPH
-    # -----------------------------
-    fig, ax1 = plt.subplots()
-
-    ax1.plot(
-        df_sim["N Participants"],
-        df_sim["High_Risk_Prob"],
-        label="Risk Probability"
-    )
-
-    ax1.axvline(saturation_point, linestyle="--")
-
-    ax1.set_xlabel("Participants")
-    ax1.set_ylabel("Risk Probability")
-
-    ax2 = ax1.twinx()
-    ax2.plot(
-        df_sim["N Participants"],
-        df_sim["Profit"],
-        linestyle="--"
-    )
-    ax2.set_ylabel("Profit ($)")
-
-    plt.title("Capacity vs Risk & Profit")
-    st.pyplot(fig)
-
-    st.divider()
-
-    # -----------------------------
-    # EXECUTIVE INTERPRETATION
-    # -----------------------------
-    st.subheader("Executive Interpretation")
-
-    st.write(
-        """
-        Revenue increases linearly as participation grows.  
-        However, structural abandonment risk also increases beyond a critical threshold.  
-
-        The model identifies a saturation point where operational risk becomes elevated.  
-        Maintaining participation below the safe capacity preserves profitability while reducing structural event stress.
-        """
-    )
-
+if high_risk_prob > 0.5:
+    st.error("⚠️ Evento con alto riesgo estructural")
+else:
+    st.success("✅ Riesgo estructural controlado")
