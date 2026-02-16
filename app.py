@@ -1,143 +1,151 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import joblib
 
-st.header("Trail Event Capacity & Risk Simulator")
+# =========================
+# LOAD MODELS
+# =========================
 
-st.subheader("Configuración del Evento")
+rf_model = joblib.load("dnf_rf_model.joblib")
+log_model = joblib.load("high_dnf_log_model.joblib")
 
-year = st.number_input("Año del evento", 2024, 2035, 2025)
-entry_fee = st.number_input("Cuota inscripción ($)", 0.0, 1000.0, 60.0)
-fixed_cost = st.number_input("Costo fijo estimado ($)", 0.0, 1000000.0, 15000.0)
+st.title("Trail Event Capacity & Risk Simulator")
 
 st.markdown("---")
-st.subheader("Configuración de Rutas")
 
-num_routes = st.number_input("Cantidad de rutas", 1, 5, 1)
+# =========================
+# GLOBAL EVENT PARAMETERS
+# =========================
 
-routes = []
+st.header("Parametros Generales del Evento")
+
+year = st.number_input("Año del evento", min_value=2024, max_value=2035, value=2025)
+price = st.number_input("Precio inscripción ($)", min_value=1.0, value=60.0)
+fixed_cost = st.number_input("Costo fijo estimado ($)", min_value=0.0, value=15000.0)
+
+st.markdown("---")
+
+# =========================
+# ROUTES CONFIGURATION
+# =========================
+
+st.header("Configuracion de Rutas")
+
+num_routes = st.number_input("Numero de rutas", min_value=1, max_value=5, value=1)
+
+routes_data = []
 
 for i in range(num_routes):
-    st.markdown(f"### Ruta {i+1}")
+    st.subheader(f"Ruta {i+1}")
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        distance = st.number_input(f"Distancia km (Ruta {i+1})", 1.0, 200.0, 50.0, key=f"d{i}")
-    with col2:
-        elevation = st.number_input(f"Desnivel m (Ruta {i+1})", 0.0, 15000.0, 2000.0, key=f"e{i}")
-    with col3:
-        participants = st.number_input(f"Participantes (Ruta {i+1})", 0, 10000, 500, key=f"p{i}")
-    
-    elev_per_km = elevation / distance if distance > 0 else 0
-    
-    routes.append({
+    distance = st.number_input(f"Distancia ruta {i+1} (km)", min_value=1.0, value=30.0, key=f"d{i}")
+    elevation = st.number_input(f"Desnivel ruta {i+1} (m)", min_value=0.0, value=1500.0, key=f"e{i}")
+    participants = st.number_input(f"Participantes ruta {i+1}", min_value=1, value=300, key=f"p{i}")
+    start_time = st.time_input(f"Hora salida ruta {i+1}", key=f"t{i}")
+
+    elevation_per_km = elevation / distance if distance > 0 else 0
+
+    routes_data.append({
         "Distance": distance,
         "Elevation Gain": elevation,
-        "elevation_per_km": elev_per_km,
+        "elevation_per_km": elevation_per_km,
         "N Participants": participants,
         "Year": year
     })
 
-if st.button("Simular Evento"):
+df_routes = pd.DataFrame(routes_data)
 
-    df_routes = pd.DataFrame(routes)
+# =========================
+# MODEL PREDICTIONS
+# =========================
 
-    # --- Predicciones ---
-    dnf_pred = rf_model.predict(df_routes)
-    high_risk_prob = log_model.predict_proba(df_routes)[:,1]
+dnf_pred = rf_model.predict(df_routes)
+risk_prob = log_model.predict_proba(df_routes)[:, 1]
 
-    df_routes["Predicted_DNF"] = dnf_pred
-    df_routes["High_Risk_Prob"] = high_risk_prob
+df_routes["Predicted_DNF"] = dnf_pred
+df_routes["High_Risk_Prob"] = risk_prob
 
-    total_participants = df_routes["N Participants"].sum()
-    revenue = total_participants * entry_fee
-    profit = revenue - fixed_cost
+# =========================
+# GLOBAL METRICS
+# =========================
 
-    global_risk = high_risk_prob.mean()
-    avg_dnf = dnf_pred.mean()
+total_participants = df_routes["N Participants"].sum()
+total_revenue = total_participants * price
+profit = total_revenue - fixed_cost
+avg_dnf = df_routes["Predicted_DNF"].mean()
+avg_risk = df_routes["High_Risk_Prob"].mean()
 
-    # Saturación simple (modelo heurístico)
-    capacity_estimate = int(1000 - (avg_dnf * 500))
-    saturation_ratio = total_participants / capacity_estimate if capacity_estimate > 0 else 0
+# Saturation logic
+capacity_limit = 1200
+saturation_ratio = total_participants / capacity_limit
 
-    # ======================
-    # DASHBOARD METRICS
-    # ======================
+if saturation_ratio > 1:
+    saturation_status = "SOBRESATURADO"
+elif saturation_ratio > 0.8:
+    saturation_status = "CERCANO A SATURACION"
+else:
+    saturation_status = "CAPACIDAD ADECUADA"
 
-    st.markdown("---")
-    st.subheader("Resumen Ejecutivo")
+# =========================
+# DASHBOARD METRICS
+# =========================
 
-    col1, col2, col3 = st.columns(3)
+st.markdown("---")
+st.header("Resumen Ejecutivo")
 
-    col1.metric("Participantes Totales", f"{total_participants:,}")
-    col2.metric("Ingreso Estimado ($)", f"${revenue:,.0f}")
-    col3.metric("Beneficio Estimado ($)", f"${profit:,.0f}")
+col1, col2, col3 = st.columns(3)
 
-    col4, col5, col6 = st.columns(3)
+col1.metric("Total Participantes", total_participants)
+col2.metric("Beneficio Estimado ($)", round(profit, 2))
+col3.metric("Riesgo Promedio DNF", round(avg_dnf, 3))
 
-    col4.metric("DNF Promedio Estimado", f"{avg_dnf:.2%}")
-    col5.metric("Probabilidad Riesgo Alto", f"{global_risk:.2%}")
-    col6.metric("Capacidad Recomendada", f"{capacity_estimate:,}")
+col4, col5 = st.columns(2)
 
-    # ======================
-    # RIESGO
-    # ======================
+col4.metric("Probabilidad Alta Riesgo", round(avg_risk, 3))
+col5.metric("Estado de Capacidad", saturation_status)
 
-    st.markdown("---")
-    st.subheader("Evaluación de Riesgo")
+# =========================
+# VISUALIZATION
+# =========================
 
-    if global_risk > 0.7:
-        st.error("Riesgo Global ALTO")
-    elif global_risk > 0.4:
-        st.warning("Riesgo Global MEDIO")
+st.markdown("---")
+st.header("Visualizacion de Riesgo por Ruta")
+
+st.bar_chart(df_routes[["Predicted_DNF", "High_Risk_Prob"]])
+
+# =========================
+# OPERATIONAL RECOMMENDATIONS
+# =========================
+
+st.markdown("---")
+st.header("Recomendaciones Operativas")
+
+for idx, row in df_routes.iterrows():
+    st.subheader(f"Ruta {idx+1}")
+
+    if row["High_Risk_Prob"] > 0.7:
+        st.warning("Riesgo alto detectado. Se recomienda:")
+        st.write("- Punto de hidratacion cada 5 km")
+        st.write("- Personal medico adicional")
+        st.write("- Mayor señalizacion tecnica")
+    elif row["High_Risk_Prob"] > 0.4:
+        st.info("Riesgo medio. Recomendado:")
+        st.write("- Punto de hidratacion cada 7-8 km")
+        st.write("- Control de tiempos intermedios")
     else:
-        st.success("Riesgo Global BAJO")
+        st.success("Riesgo bajo. Operacion estandar suficiente.")
 
-    if saturation_ratio > 1:
-        st.error("Evento Saturado - Reduce participantes o aumenta soporte logístico")
-    elif saturation_ratio > 0.8:
-        st.warning("Evento cercano a saturación")
-    else:
-        st.success("Capacidad dentro de rango seguro")
+# =========================
+# CAPACITY ALERT
+# =========================
 
-    # ======================
-    # RECOMENDACIONES OPERATIVAS
-    # ======================
-
-    st.markdown("---")
-    st.subheader("Recomendaciones Operativas")
-
-    hydration_points = int(df_routes["Distance"].mean() / 5)
-    medical_points = int(df_routes["Distance"].mean() / 15)
-
-    st.write(f"- Centros de hidratación recomendados: {hydration_points}")
-    st.write(f"- Puntos médicos recomendados: {medical_points}")
-    st.write(f"- Staff mínimo sugerido: {int(total_participants / 50)} personas")
-
-    # ======================
-    # GRÁFICO EXPLICATIVO
-    # ======================
-
-    st.markdown("---")
-    st.subheader("Visualización de Riesgo vs Participantes")
-
-    fig, ax1 = plt.subplots()
-
-    ax1.bar(range(len(df_routes)), df_routes["N Participants"])
-    ax1.set_ylabel("Participantes")
-
-    ax2 = ax1.twinx()
-    ax2.plot(df_routes["High_Risk_Prob"], linestyle="--")
-    ax2.set_ylabel("Probabilidad Riesgo Alto")
-
-    st.pyplot(fig)
-
-    # Tabla detallada
-    st.markdown("---")
-    st.subheader("Detalle por Ruta")
-    st.dataframe(df_routes)
+if saturation_ratio > 1:
+    st.error("El evento supera la capacidad recomendada.")
+elif saturation_ratio > 0.8:
+    st.warning("El evento esta cercano al limite de capacidad.")
+else:
+    st.success("El evento esta dentro de parametros de capacidad.")
 
 
 
